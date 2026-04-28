@@ -5,77 +5,256 @@ conn = pymssql.connect(cr.server, cr.user, cr.password, cr.db)
 cursor = conn.cursor()
 
 cursor.execute ("""
-USE ShopBd
+--ЗАДАНИЕ 1
 
-CREATE TABLE GOODS(
-	id INT IDENTITY(1, 1) PRIMARY KEY,
-	[name] TEXT,
-	[weight] FLOAT,
-	terminate_date DATE
-	)
+CREATE DATABASE SalesDB
+USE SalesDB
 
-CREATE TABLE GOODS_LIST(
-	id INT IDENTITY(1, 1) PRIMARY KEY,
-	goods INT,
-	[status] TEXT,
-	[count] INT,
-	CONSTRAINT FK_1 FOREIGN KEY (goods) REFERENCES GOODS(id)
-	)
+CREATE TABLE Customers(
+	CustomerID INT IDENTITY(1,1) PRIMARY KEY,
+	FullName NVARCHAR(100) NOT NULL,
+	Email NVARCHAR(100) UNIQUE NOT NULL,
+	RegistrationDate DATETIME NOT NULL DEFAULT GETDATE()
+)
 
-CREATE TABLE LIST(
-	id INT IDENTITY(1, 1) PRIMARY KEY,
-	list INT
-	CONSTRAINT FK_3 FOREIGN KEY (list) REFERENCES GOODS_LIST(id)
-	)
+CREATE TABLE Orders(
+	OrderID INT IDENTITY(1,1) PRIMARY KEY,
+	CustomerID INT NOT NULL,
+	OrderTotal FLOAT NOT NULL CHECK (OrderTotal > 0),
+	OrderDate DATETIME NOT NULL DEFAULT GETDATE(),
+	[Status] NVARCHAR(20) NOT NULL DEFAULT 'НОВЫЙ',
+	CONSTRAINT FK_1 FOREIGN KEY (CustomerID) REFERENCES Customers(CustomerID)
+)
 
-CREATE TABLE STORAGE(
-	id INT IDENTITY(1, 1) PRIMARY KEY,
-	goods_list INT,
-	available BIT
-	CONSTRAINT FK_2 FOREIGN KEY (goods_list) REFERENCES LIST(id)
-	)
 
-CREATE TABLE LOGS(
-	id INT IDENTITY(1, 1) PRIMARY KEY,
-	[table] TEXT,
-	op_type TEXT,
-	date_time DATETIME
-	)
 
-GO
-CREATE FUNCTION SELECT_GOODS_LIST()
-RETURNS TABLE
-AS
-RETURN (SELECT GOODS_LIST.id, GOODS.[name], GOODS.[weight], 
-		GOODS.terminate_date, GOODS_LIST.[count] FROM GOODS_LIST
-		JOIN GOODS ON GOODS_LIST.goods = GOODS.id)
-GO
+CREATE DATABASE LogisticsDB
+USE LogisticsDB
 
-GO
-CREATE FUNCTION SELECT_STORAGE()
-RETURNS TABLE
-AS
-RETURN (SELECT STORAGE.id, LIST.list, STORAGE.available FROM STORAGE
-		JOIN LIST ON STORAGE.goods_list = LIST.id)
-GO
+CREATE TABLE Warehouses(
+	WarehousesID INT IDENTITY(1,1) PRIMARY KEY,
+	[Location] NVARCHAR(100) UNIQUE NOT NULL,
+	Capacity FLOAT NOT NULL,
+	ManagerContact NVARCHAR(50) NOT NULL DEFAULT 'НЕ НАЗНАЧЕН',
+	CreatedDate DATETIME NOT NULL DEFAULT GETDATE()
+)
+
+CREATE TABLE Shipments(
+	ShipmentID INT IDENTITY(1,1) PRIMARY KEY,
+	WarehousesID INT NOT NULL ,
+	OrderID INT NOT NULL, 
+	TrackingCode NVARCHAR(50) UNIQUE NOT NULL,
+	[Weight] FLOAT NOT NULL,
+	DispatchDate DATETIME NULL,
+	[STATUS] NVARCHAR(20) NOT NULL DEFAULT 'ОЖИДАЕТ ОТПРАВКИ',
+	CONSTRAINT FK_2 FOREIGN KEY (WarehousesID) REFERENCES Warehouses(WarehousesID)
+)
+
+--ЛОГИЧЕСКАЯ ССЫЛКА НА ЗАКАЗ ИЗ SalesDB
 
 GO
-CREATE PROCEDURE INSERT_GOODS
-@name TEXT,
-@weight FLOAT,
-@terminate_date DATE
+
+CREATE TRIGGER TR_Shipments_CheckOrder
+ON Shipments
+FOR INSERT, UPDATE
 AS
 BEGIN
-	INSERT INTO GOODS VALUES(@name, @weight, @terminate_date)
-END
+    IF EXISTS (
+        SELECT 1 FROM inserted i
+        LEFT JOIN SalesDB.dbo.Orders o ON i.OrderID = o.OrderID
+        WHERE o.OrderID IS NULL
+    )
+    BEGIN
+        RAISERROR ('Ошибка: Указанный OrderID не существует в SalesDB.', 16, 1);
+        ROLLBACK TRANSACTION;
+    END
+END;
+
+
+--ЗАДАНИЕ 2
+
+-- Функции для базы SalesDB
+USE SalesDB;
 GO
 
-CREATE TRIGGER ADD_TO_LIST
-ON GOODS_LIST
-FOR INSERT
+-- 2.1. Функция для получения списка всех клиентов
+CREATE FUNCTION dbo.fn_GetCustomers()
+RETURNS TABLE
 AS
-INSERT INTO LIST VALUES ((SELECT * FROM GOODS_LIST 
-						  ORDER BY GOODS_LIST.id DESC))
+RETURN 
+(
+    SELECT CustomerID, FullName, Email, RegistrationDate
+    FROM dbo.Customers
+);
+GO
+
+-- 2.2. Функция для получения заказов по статусу
+CREATE FUNCTION dbo.fn_GetOrdersByStatus(@status NVARCHAR(20))
+RETURNS TABLE
+AS
+RETURN 
+(
+    SELECT OrderID, CustomerID, OrderTotal, OrderDate, [Status]
+    FROM dbo.Orders
+    WHERE [Status] = @status
+);
+GO
+
+--Функции для базы LogisticsDB
+USE LogisticsDB;
+GO
+
+--Функция для получения списка всех складов
+CREATE FUNCTION dbo.fn_GetWarehouses()
+RETURNS TABLE
+AS
+RETURN 
+(
+    SELECT WarehousesID, [Location], Capacity, ManagerContact, CreatedDate
+    FROM dbo.Warehouses
+);
+GO
+
+--Функция для получения отгрузок по ID склада
+CREATE FUNCTION dbo.fn_GetShipmentsByWarehouse(@wid INT)
+RETURNS TABLE
+AS
+RETURN 
+(
+    SELECT ShipmentID, WarehousesID, OrderID, TrackingCode, [Weight], DispatchDate, [STATUS]
+    FROM dbo.Shipments
+    WHERE WarehousesID = @wid
+);
+GO
+
+--2.3.Выборки
+
+--SalesDB
+SELECT * FROM SalesDB.dbo.fn_GetCustomers();
+
+SELECT * FROM SalesDB.dbo.fn_GetOrdersByStatus('НОВЫЙ');
+
+--LogisticsDB
+SELECT * FROM LogisticsDB.dbo.fn_GetWarehouses();
+
+SELECT * FROM LogisticsDB.dbo.fn_GetShipmentsByWarehouse(1); 
+SELECT * FROM LogisticsDB.dbo.fn_GetShipmentsByWarehouse(2); 
+
+
+
+--ЗАДАНИЕ 3
+
+USE SalesDB
+
+CREATE TRIGGER trg_Sales
+ON Orders
+AFTER INSERT, UPDATE
+AS
+BEGIN
+	BEGIN TRANSACTION
+		BEGIN TRY
+			INSERT INTO LogisticsDB.dbo.Shipments(WarehousesID, OrderID, TrackingCode, DispatchDate, [Weight], [Status])
+				SELECT 1, OrderID,'TRK_' + CONVERT(NVARCHAR(46), NEWID()), NULL, 1, 'Ожидает отправки' FROM inserted
+				WHERE inserted.[Status] = 'Подтверждён'
+			COMMIT TRANSACTION
+		END TRY
+		BEGIN CATCH
+			ROLLBACK TRANSACTION
+			THROW
+		END CATCH
+END
+
+
+--ЗАДАНИЕ 4
+
+--4.1 
+
+USE SalesDB;
+GO
+
+-- Процедура для добавления клиента
+CREATE PROCEDURE sp_AddCustomer
+    @Name NVARCHAR(100),
+    @Email NVARCHAR(100)
+AS
+BEGIN
+    INSERT INTO Customers (FullName, Email)
+    VALUES (@Name, @Email);
+END;
+GO
+
+-- Процедура для добавления заказа
+CREATE PROCEDURE sp_AddOrder
+    @CustID INT,
+    @Total FLOAT
+AS
+BEGIN
+    INSERT INTO Orders (CustomerID, OrderTotal)
+    VALUES (@CustID, @Total);
+END;
+GO
+
+INSERT INTO LogisticsDB.dbo.Warehouses ([Location], Capacity) VALUES ('Склад №1', 5000);
+
+-- Добавляем клиента
+EXEC sp_AddCustomer @Name = 'Алексей Петров', @Email = 'alex@mail.ru';
+
+-- Добавляем заказ 
+EXEC sp_AddOrder @CustID = 1, @Total = 500.0;
+
+--4.2 
+
+-- Обновляем статус
+UPDATE SalesDB.dbo.Orders SET [Status] = 'Подтверждён' WHERE OrderID = 1;
+
+SELECT * FROM LogisticsDB.dbo.fn_GetShipmentsByWarehouse(1);
+
+--4.3 
+
+-- Сумма меньше нуля
+BEGIN TRY
+    EXEC sp_AddOrder @CustID = 1, @Total = -100; 
+END TRY
+BEGIN CATCH
+    PRINT 'Сумма заказа не может быть отрицательной!';
+END CATCH;
+
+-- Дубликат почты
+BEGIN TRY
+    EXEC sp_AddCustomer @Name = 'Клон', @Email = 'alex@mail.ru'; 
+END TRY
+BEGIN CATCH
+    PRINT 'Такой Email уже есть в базе!';
+END CATCH;
+
+--4.4 
+
+-- Посмотреть всех клиентов
+SELECT * FROM SalesDB.dbo.fn_GetCustomers();
+
+-- Посмотреть только подтвержденные заказы
+SELECT * FROM SalesDB.dbo.fn_GetOrdersByStatus('Подтверждён');
+
+-- Посмотреть отгрузки на складе
+SELECT * FROM LogisticsDB.dbo.fn_GetShipmentsByWarehouse(1);
+
+--4.5 
+
+BEGIN TRY
+    BEGIN TRANSACTION;
+        
+        -- Пытаемся обновить заказ, но подсовываем ошибку 
+        UPDATE SalesDB.dbo.Orders 
+        SET OrderTotal = OrderTotal / 0 
+        WHERE OrderID = 1;
+
+    COMMIT TRANSACTION;
+END TRY
+BEGIN CATCH
+    -- Если произошла любая ошибка , всё отменяется
+    IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;
+    PRINT 'Произошла критическая ошибка. Все изменения отменены!';
+END CATCH;
 """
 )
 
