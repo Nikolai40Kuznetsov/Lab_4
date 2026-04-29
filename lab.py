@@ -1,22 +1,12 @@
-import pymssql
-import credits as cr
-
-conn = pymssql.connect(cr.server, cr.user, cr.password, cr.db)
-cursor = conn.cursor()
-
-cursor.execute ("""
---ЗАДАНИЕ 1
-
+# ЗАДАНИЕ 1
 CREATE DATABASE SalesDB
 USE SalesDB
-
 CREATE TABLE Customers(
 	CustomerID INT IDENTITY(1,1) PRIMARY KEY,
 	FullName NVARCHAR(100) NOT NULL,
 	Email NVARCHAR(100) UNIQUE NOT NULL,
 	RegistrationDate DATETIME NOT NULL DEFAULT GETDATE()
 )
-
 CREATE TABLE Orders(
 	OrderID INT IDENTITY(1,1) PRIMARY KEY,
 	CustomerID INT NOT NULL,
@@ -25,12 +15,8 @@ CREATE TABLE Orders(
 	[Status] NVARCHAR(20) NOT NULL DEFAULT 'НОВЫЙ',
 	CONSTRAINT FK_1 FOREIGN KEY (CustomerID) REFERENCES Customers(CustomerID)
 )
-
-
-
 CREATE DATABASE LogisticsDB
 USE LogisticsDB
-
 CREATE TABLE Warehouses(
 	WarehousesID INT IDENTITY(1,1) PRIMARY KEY,
 	[Location] NVARCHAR(100) UNIQUE NOT NULL,
@@ -38,7 +24,6 @@ CREATE TABLE Warehouses(
 	ManagerContact NVARCHAR(50) NOT NULL DEFAULT 'НЕ НАЗНАЧЕН',
 	CreatedDate DATETIME NOT NULL DEFAULT GETDATE()
 )
-
 CREATE TABLE Shipments(
 	ShipmentID INT IDENTITY(1,1) PRIMARY KEY,
 	WarehousesID INT NOT NULL ,
@@ -49,11 +34,8 @@ CREATE TABLE Shipments(
 	[STATUS] NVARCHAR(20) NOT NULL DEFAULT 'ОЖИДАЕТ ОТПРАВКИ',
 	CONSTRAINT FK_2 FOREIGN KEY (WarehousesID) REFERENCES Warehouses(WarehousesID)
 )
-
---ЛОГИЧЕСКАЯ ССЫЛКА НА ЗАКАЗ ИЗ SalesDB
-
+# ЛОГИЧЕСКАЯ ССЫЛКА НА ЗАКАЗ ИЗ SalesDB
 GO
-
 CREATE TRIGGER TR_Shipments_CheckOrder
 ON Shipments
 FOR INSERT, UPDATE
@@ -69,15 +51,11 @@ BEGIN
         ROLLBACK TRANSACTION;
     END
 END;
-
-
---ЗАДАНИЕ 2
-
--- Функции для базы SalesDB
+# ЗАДАНИЕ 2
+# Функции для базы SalesDB
 USE SalesDB;
 GO
-
--- 2.1. Функция для получения списка всех клиентов
+# 2.1. Функция для получения списка всех клиентов
 CREATE FUNCTION dbo.fn_GetCustomers()
 RETURNS TABLE
 AS
@@ -87,8 +65,7 @@ RETURN
     FROM dbo.Customers
 );
 GO
-
--- 2.2. Функция для получения заказов по статусу
+# 2.2. Функция для получения заказов по статусу
 CREATE FUNCTION dbo.fn_GetOrdersByStatus(@status NVARCHAR(20))
 RETURNS TABLE
 AS
@@ -99,12 +76,10 @@ RETURN
     WHERE [Status] = @status
 );
 GO
-
---Функции для базы LogisticsDB
+# Функции для базы LogisticsDB
 USE LogisticsDB;
 GO
-
---Функция для получения списка всех складов
+# Функция для получения списка всех складов
 CREATE FUNCTION dbo.fn_GetWarehouses()
 RETURNS TABLE
 AS
@@ -114,8 +89,7 @@ RETURN
     FROM dbo.Warehouses
 );
 GO
-
---Функция для получения отгрузок по ID склада
+# Функция для получения отгрузок по ID склада
 CREATE FUNCTION dbo.fn_GetShipmentsByWarehouse(@wid INT)
 RETURNS TABLE
 AS
@@ -126,26 +100,16 @@ RETURN
     WHERE WarehousesID = @wid
 );
 GO
-
---2.3.Выборки
-
---SalesDB
+# 2.3.Выборки
+# SalesDB
 SELECT * FROM SalesDB.dbo.fn_GetCustomers();
-
 SELECT * FROM SalesDB.dbo.fn_GetOrdersByStatus('НОВЫЙ');
-
---LogisticsDB
+# LogisticsDB
 SELECT * FROM LogisticsDB.dbo.fn_GetWarehouses();
-
 SELECT * FROM LogisticsDB.dbo.fn_GetShipmentsByWarehouse(1); 
 SELECT * FROM LogisticsDB.dbo.fn_GetShipmentsByWarehouse(2); 
-
-
-
---ЗАДАНИЕ 3
-
+# ЗАДАНИЕ 3
 USE SalesDB
-
 CREATE TRIGGER trg_Sales
 ON Orders
 AFTER INSERT, UPDATE
@@ -155,7 +119,7 @@ BEGIN
 		BEGIN TRY
 			INSERT INTO LogisticsDB.dbo.Shipments(WarehousesID, OrderID, TrackingCode, DispatchDate, [Weight], [Status])
 				SELECT 1, OrderID,'TRK_' + CONVERT(NVARCHAR(46), NEWID()), NULL, 1, 'Ожидает отправки' FROM inserted
-				WHERE inserted.[Status] = 'Подтверждён'
+				WHERE inserted.[Status] = 'Подтвержден'
 			COMMIT TRANSACTION
 		END TRY
 		BEGIN CATCH
@@ -163,16 +127,10 @@ BEGIN
 			THROW
 		END CATCH
 END
-
-
---ЗАДАНИЕ 4
-
---4.1 
-
+# ЗАДАНИЕ 4
+# 4.1 
 USE SalesDB;
 GO
-
--- Процедура для добавления клиента
 CREATE PROCEDURE sp_AddCustomer
     @Name NVARCHAR(100),
     @Email NVARCHAR(100)
@@ -182,8 +140,6 @@ BEGIN
     VALUES (@Name, @Email);
 END;
 GO
-
--- Процедура для добавления заказа
 CREATE PROCEDURE sp_AddOrder
     @CustID INT,
     @Total FLOAT
@@ -193,72 +149,41 @@ BEGIN
     VALUES (@CustID, @Total);
 END;
 GO
-
 INSERT INTO LogisticsDB.dbo.Warehouses ([Location], Capacity) VALUES ('Склад №1', 5000);
-
--- Добавляем клиента
-EXEC sp_AddCustomer @Name = 'Алексей Петров', @Email = 'alex@mail.ru';
-
--- Добавляем заказ 
+EXEC sp_AddCustomer @Name = 'Арсен Брат', @Email = 'bratan@mail.ru';
 EXEC sp_AddOrder @CustID = 1, @Total = 500.0;
-
---4.2 
-
--- Обновляем статус
-UPDATE SalesDB.dbo.Orders SET [Status] = 'Подтверждён' WHERE OrderID = 1;
-
+# 4.2 
+UPDATE SalesDB.dbo.Orders SET [Status] = 'Подтвержден' WHERE OrderID = 1;
 SELECT * FROM LogisticsDB.dbo.fn_GetShipmentsByWarehouse(1);
-
---4.3 
-
--- Сумма меньше нуля
+# 4.3 
 BEGIN TRY
     EXEC sp_AddOrder @CustID = 1, @Total = -100; 
 END TRY
 BEGIN CATCH
     PRINT 'Сумма заказа не может быть отрицательной!';
 END CATCH;
-
--- Дубликат почты
 BEGIN TRY
-    EXEC sp_AddCustomer @Name = 'Клон', @Email = 'alex@mail.ru'; 
+    EXEC sp_AddCustomer @Name = 'Клон', @Email = 'bratan@mail.ru'; 
 END TRY
 BEGIN CATCH
     PRINT 'Такой Email уже есть в базе!';
 END CATCH;
-
---4.4 
-
--- Посмотреть всех клиентов
+# 4.4 
+# Посмотреть всех клиентов
 SELECT * FROM SalesDB.dbo.fn_GetCustomers();
-
--- Посмотреть только подтвержденные заказы
-SELECT * FROM SalesDB.dbo.fn_GetOrdersByStatus('Подтверждён');
-
--- Посмотреть отгрузки на складе
+# Посмотреть только подтвержденные заказы
+SELECT * FROM SalesDB.dbo.fn_GetOrdersByStatus('Подтвержден');
+# Посмотреть отгрузки на складе
 SELECT * FROM LogisticsDB.dbo.fn_GetShipmentsByWarehouse(1);
-
---4.5 
-
+# 4.5 
 BEGIN TRY
     BEGIN TRANSACTION;
-        
-        -- Пытаемся обновить заказ, но подсовываем ошибку 
         UPDATE SalesDB.dbo.Orders 
         SET OrderTotal = OrderTotal / 0 
         WHERE OrderID = 1;
-
     COMMIT TRANSACTION;
 END TRY
 BEGIN CATCH
-    -- Если произошла любая ошибка , всё отменяется
     IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;
-    PRINT 'Произошла критическая ошибка. Все изменения отменены!';
+    PRINT 'Произошла ошибка все изменения отменены';
 END CATCH;
-"""
-)
-
-
-print(cursor.fetchall())
-conn.commit()
-conn.close()
